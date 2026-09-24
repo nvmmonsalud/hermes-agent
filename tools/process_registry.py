@@ -572,12 +572,13 @@ class ProcessSession:
     def mark_exited(self, exit_code, reason: str = "exited", source: str = "") -> None:
         """Record an exit. A kill that raced the observer already recorded its own
         exit_code/reason; never overwrite it."""
-        self.exited = True
-        if self.completion_reason != "killed":
-            self.exit_code = exit_code
-            self.completion_reason = reason
-            if source:
-                self.termination_source = source
+        with self._lock:
+            self.exited = True
+            if self.completion_reason != "killed":
+                self.exit_code = exit_code
+                self.completion_reason = reason
+                if source:
+                    self.termination_source = source
 
 
 # Watcher routing fields, in event-dict key order (``watcher_<key>`` on the session).
@@ -675,26 +676,32 @@ class ProcessRegistry(ProcessCheckpointMixin):
                 self._emit_heartbeat(session, now)
 
     def _emit_heartbeat(self, session: ProcessSession, now: float) -> None:
+        # Keep liveness, delta accounting, and publication in one session-lock critical
+        # section. A heartbeat either reaches the queue before the terminal transition or
+        # observes ``exited`` and drops itself, so completion can never be overtaken by a
+        # due tick selected just before exit.
         with session._lock:
+            if session.exited:
+                return
             delta = session.total_output_chars - session._heartbeat_total_at_last
             output = session.output_buffer[-delta:] if delta > 0 else ""
             session._heartbeat_total_at_last = session.total_output_chars
-        if len(output) > HEARTBEAT_OUTPUT_CHARS:
-            cut = len(output) - HEARTBEAT_OUTPUT_CHARS
-            output = f"...({cut} earlier characters omitted)\n" + output[-HEARTBEAT_OUTPUT_CHARS:]
-        session._heartbeat_last = now
-        session._heartbeat_seq += 1
-        notification = {
-            **self._watch_event_base(session),
-            "type": "heartbeat",
-            "seq": session._heartbeat_seq,
-            "interval": session.heartbeat_seconds,
-            "elapsed": int(now - session.started_at) if session.started_at else 0,
-            "output": output,
-            "started_at": session.started_at,
-        }
-        _redact_process_result(notification)
-        self.completion_queue.put(notification)
+            if len(output) > HEARTBEAT_OUTPUT_CHARS:
+                cut = len(output) - HEARTBEAT_OUTPUT_CHARS
+                output = f"...({cut} earlier characters omitted)\n" + output[-HEARTBEAT_OUTPUT_CHARS:]
+            session._heartbeat_last = now
+            session._heartbeat_seq += 1
+            notification = {
+                **self._watch_event_base(session),
+                "type": "heartbeat",
+                "seq": session._heartbeat_seq,
+                "interval": session.heartbeat_seconds,
+                "elapsed": int(now - session.started_at) if session.started_at else 0,
+                "output": output,
+                "started_at": session.started_at,
+            }
+            _redact_process_result(notification)
+            self.completion_queue.put(notification)
 
     @staticmethod
     def _clean_shell_noise(text: str) -> str:
@@ -1925,8 +1932,7 @@ class ProcessRegistry(ProcessCheckpointMixin):
                         fcntl.fcntl(fd, fcntl.F_SETFL, flags)
             except Exception as e:
                 logger.debug("Non-blocking drain failed for %s: %s", session.id, e)
-        with session._lock:
-            session.mark_exited(rc)
+        session.mark_exited(rc)
         logger.info(
             "Reconciled session %s: direct child exited with code %s but reader "
             "was still blocked (orphaned pipe). Flipped to exited.",

@@ -8,6 +8,7 @@ heartbeats stop at exit, and the normal completion notice still fires.
 import json
 import queue
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -61,6 +62,28 @@ def test_heartbeat_carries_only_new_output_and_stops_at_exit(tmp_path, monkeypat
     assert events.index(completion[0]) > events.index(beats[-1])
     assert not _wait_until(lambda: any(e.get("type") == "heartbeat" for e in list(registry.completion_queue.queue)),
                            timeout=2.5)
+
+
+def test_due_heartbeat_is_dropped_when_session_becomes_terminal(monkeypatch):
+    """A heartbeat selected before exit may not publish after completion."""
+    from tools.process_registry import ProcessSession
+
+    registry = ProcessRegistry()
+    session = ProcessSession(
+        id="proc_heartbeat_terminal_race",
+        command="exit 0",
+        started_at=1.0,
+        notify_on_complete=True,
+        heartbeat_seconds=1,
+    )
+    registry._running[session.id] = session
+    with patch.object(registry, "_write_checkpoint"), patch.object(registry, "_release_finished_handles"):
+        session.mark_exited(0)
+        registry._move_to_finished(session)
+        registry._emit_heartbeat(session, 2.0)
+
+    assert registry.completion_queue.qsize() == 1
+    assert registry.completion_queue.get_nowait()["type"] == "completion"
 
 
 def test_terminal_dispatch_heartbeat_implies_notify_and_refuses_foreground(monkeypatch):
