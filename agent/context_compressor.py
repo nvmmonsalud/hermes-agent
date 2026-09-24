@@ -4997,8 +4997,22 @@ Write only the summary body. Do not include any preamble or prefix."""
         hard context limit is strictly worse than an unprofitable rewrite.
         """
         try:
-            from agent.compression_economics import evaluate_compaction_economics
+            from agent.compression_economics import (
+                DEFAULT_PAYBACK_HORIZON_REQUESTS,
+                evaluate_compaction_economics,
+                resolve_cache_write_read_ratio,
+                resolve_payback_horizon_requests,
+            )
 
+            # Read defensively and resolve before measuring: a compressor rebuilt without __init__
+            # (tests, restored session state) must resolve a sane value rather than raise its way to
+            # a skipped compaction, and a malformed value must degrade to "disabled".
+            ratio = resolve_cache_write_read_ratio(getattr(self, "cache_write_read_ratio", 0.0))
+            if ratio <= 0:
+                return False, ""
+            horizon = resolve_payback_horizon_requests(
+                getattr(self, "cache_payback_horizon_requests", DEFAULT_PAYBACK_HORIZON_REQUESTS)
+            )
             compress_start, compress_end = self._compress_window(messages)
             if compress_start >= compress_end:
                 return False, ""
@@ -5014,8 +5028,8 @@ Write only the summary body. Do not include any preamble or prefix."""
             return evaluate_compaction_economics(
                 reclaimed_tokens=reclaimed,
                 new_prefix_tokens=max(0, int(display_tokens) - reclaimed),
-                ratio=self.cache_write_read_ratio,
-                horizon_requests=self.cache_payback_horizon_requests,
+                ratio=ratio,
+                horizon_requests=horizon,
                 context_pressure=pressure,
             )
         except Exception as exc:  # noqa: BLE001 — the gate must never block a compaction
@@ -5325,17 +5339,17 @@ Write only the summary body. Do not include any preamble or prefix."""
         # sent prefix, so the request after it pays a cache WRITE for that prefix instead of a read.
         # Defer when the reclaim cannot repay that rewrite — window pressure overrides the gate, and a
         # manual /compress never defers. Runs BEFORE any mutation so a deferral returns the pristine
-        # input, matching the no-op contract callers gate on with `result is not input`.
-        if self.cache_write_read_ratio > 0:
-            _defer, _econ_reason = self._compaction_economics_verdict(messages, display_tokens, force)
-            if _defer:
-                self._structural_no_op_result(telemetry, "cache_economics_deferred", _econ_reason)
-                if not self.quiet_mode:
-                    logger.info(
-                        "Compaction deferred — %s. The reclaim cannot repay the prompt-cache rewrite "
-                        "yet; compaction proceeds once window pressure overrides.", _econ_reason,
-                    )
-                return messages
+        # input, matching the no-op contract callers gate on with `result is not input`. Costs nothing
+        # while the ratio is 0 (the helper resolves and returns before measuring anything).
+        _defer, _econ_reason = self._compaction_economics_verdict(messages, display_tokens, force)
+        if _defer:
+            self._structural_no_op_result(telemetry, "cache_economics_deferred", _econ_reason)
+            if not self.quiet_mode:
+                logger.info(
+                    "Compaction deferred — %s. The reclaim cannot repay the prompt-cache rewrite "
+                    "yet; compaction proceeds once window pressure overrides.", _econ_reason,
+                )
+            return messages
         # Phase 1: Prune old tool results (cheap, no LLM call)
         messages, pruned_count = self._prune_old_tool_results(
             messages, protect_tail_count=self.protect_last_n, protect_tail_tokens=self.tail_token_budget,

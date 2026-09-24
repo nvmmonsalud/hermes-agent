@@ -190,6 +190,14 @@ class TestCompressorAdoptsTheGate:
         defer, reason = cc._compaction_economics_verdict([], 150_000, False)  # noqa: SLF001
         assert defer is False and reason == ""
 
+    def test_verdict_survives_a_compressor_built_without_init(self):
+        """A compressor built via ``__new__`` (tests, restored session state) must not raise its way
+        to a skipped compaction: the gate resolves its own settings defensively."""
+        from agent.context_compressor import ContextCompressor
+
+        cc = ContextCompressor.__new__(ContextCompressor)
+        assert cc._compaction_economics_verdict([], 150_000, False) == (False, "")  # noqa: SLF001
+
 
 class TestConfigRegistration:
     """Every DEFAULT_CONFIG key needs a reader, and every reader a registration (hermes_cli/AGENTS.md)."""
