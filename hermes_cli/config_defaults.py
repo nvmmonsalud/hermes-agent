@@ -596,6 +596,19 @@ DEFAULT_CONFIG = {
         # A prune only commits when it reclaims at least this many tokens, then waits for a
         # trigger-sized runway to regrow before rearming. 0 = no minimum-savings gate.
         "proactive_prune_min_reclaim_tokens": 4096,
+        # cache_write_read_ratio: prompt-cache repayment gate for FULL compaction. Compaction is the
+        # one sanctioned cache break, and the request after it pays a cache WRITE for the rewritten
+        # prefix instead of a cache READ; providers price a write as a multiple of a read
+        # (Anthropic-style ~12.5x). When set above 1.0, a compaction whose reclaim cannot repay that
+        # rewrite within `cache_payback_horizon_requests` is deferred. Window pressure overrides the
+        # gate at 85% of the context window (agent/compression_economics.py), so a deferred session
+        # still compacts before the provider's hard limit; a manual /compress always runs.
+        # 0 = disabled (compact whenever the trigger fires — historical behaviour).
+        "cache_write_read_ratio": 0.0,
+        # cache_payback_horizon_requests: how many subsequent requests the rewrite penalty may take to
+        # repay before compaction is deferred. Higher = more willing to compact early. 0 = defer
+        # unless the rewrite repays immediately. Only read when cache_write_read_ratio is enabled.
+        "cache_payback_horizon_requests": 3,
         # micro_compact: opt-in — after each turn fold the oldest un-absorbed exchange into a
         # rolling summary, amortizing compression cost. Off by default because every pass rewrites
         # sent history and breaks the prompt-cache prefix EVERY turn; enable only if the amortized

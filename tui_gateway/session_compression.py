@@ -79,6 +79,7 @@ _COMPRESSION_INT_KEYS = (
     ("proactive_prune_tokens", 0, 0),
     ("proactive_prune_min_result_chars", 8000, 0),
     ("proactive_prune_min_reclaim_tokens", 4096, 0),
+    ("cache_payback_horizon_requests", 3, 0),
     ("protect_last_n", 20, 0),
     ("min_tail_user_messages", 1, 1),
 )
@@ -96,7 +97,8 @@ def _apply_live_compression_config(agent: Any, cfg: dict | None) -> None:
     the deferred ``get_model_context_length`` resolution).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    compression = cfg.get("compression") if isinstance(cfg.get("compression"), dict) else {}
+    _compression_raw = cfg.get("compression")
+    compression: dict = _compression_raw if isinstance(_compression_raw, dict) else {}
     model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
     from agent.agent_init import config_context_length_for_runtime, set_config_context_length
     enabled_raw = compression.get("enabled", True)
@@ -128,6 +130,13 @@ def _apply_live_compression_config(agent: Any, cfg: dict | None) -> None:
     with contextlib.suppress(TypeError, ValueError):
         ratio_raw = compression.get("target_ratio", _compressor_ctor_default("summary_target_ratio", 0.20))
         cc.summary_target_ratio = max(0.10, min(float(ratio_raw), 0.80))
+    # cache_write_read_ratio: absence restores the ctor default (0.0 = prompt-cache gate disabled).
+    # Coerced through the economics module so a malformed value cannot silently enable a cost model.
+    from agent.compression_economics import resolve_cache_write_read_ratio
+    ratio_default = resolve_cache_write_read_ratio(_compressor_ctor_default("cache_write_read_ratio", 0.0))
+    cc.cache_write_read_ratio = resolve_cache_write_read_ratio(
+        compression.get("cache_write_read_ratio", ratio_default)
+    )
     # Absent or invalid shape (agent_init treats both as empty): stale overrides must stop steering.
     raw_thresholds = compression.get("model_thresholds")
     cc.model_thresholds = {

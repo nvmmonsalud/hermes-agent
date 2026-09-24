@@ -2649,6 +2649,7 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
         model_thresholds: dict[str, float] | None = None, threshold_tokens_cap: Any = None,
         proactive_prune_tokens: int = 0, proactive_prune_min_result_chars: int = 8000,
         proactive_prune_min_reclaim_tokens: int = 4096, min_tail_user_messages: int = 1, tail_mode: str = "lean",
+        cache_write_read_ratio: float = 0.0, cache_payback_horizon_requests: int = 3,
         custom_providers: list | None = None,
     ):
         self.model, self.base_url, self.api_key, self.provider, self.api_mode = model, base_url, api_key, provider, api_mode
@@ -2675,6 +2676,13 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
         self.proactive_prune_min_result_chars = max(_PRUNE_MIN_CHARS, int(proactive_prune_min_result_chars or 8000))
         # Every commit breaks the prompt-cache prefix; require a meaningful reclaim batch so fires are episodic.
         self.proactive_prune_min_reclaim_tokens = max(0, int(proactive_prune_min_reclaim_tokens or 0))
+        # Prompt-cache repayment gate for FULL compaction (0.0 = disabled). The model, the horizon
+        # semantics and the window-pressure override live in agent/compression_economics.py.
+        from agent.compression_economics import (
+            resolve_cache_write_read_ratio, resolve_payback_horizon_requests,
+        )
+        self.cache_write_read_ratio = resolve_cache_write_read_ratio(cache_write_read_ratio)
+        self.cache_payback_horizon_requests = resolve_payback_horizon_requests(cache_payback_horizon_requests)
         # A committed prune is a cache boundary: rearm only after the prompt regrows the reclaimed tokens.
         self._proactive_prune_rearm_tokens: int = 0
         # Dedup key for the over-threshold "reclamation no-oped" warning
@@ -4977,6 +4985,43 @@ Write only the summary body. Do not include any preamble or prefix."""
         self._last_compression_savings_pct = 0.0
         self._record_structural_no_op(reason)
 
+    def _compaction_economics_verdict(
+        self, messages: List[Dict[str, Any]], display_tokens: int, force: bool,
+    ) -> "tuple[bool, str]":
+        """``(defer, reason)`` for the prompt-cache repayment gate; fail-open on any error.
+
+        The reclaim is measured off the real compressible window rather than estimated, so the gate
+        sees the same boundaries the summary pass would. ``force`` (a manual ``/compress``) reports
+        full window pressure so the economic gate always stands down — an explicit user request is
+        never overridden by a cost model. Any failure returns "proceed": riding into the provider's
+        hard context limit is strictly worse than an unprofitable rewrite.
+        """
+        try:
+            from agent.compression_economics import evaluate_compaction_economics
+
+            compress_start, compress_end = self._compress_window(messages)
+            if compress_start >= compress_end:
+                return False, ""
+            reclaimed = sum(
+                _estimate_msg_budget_tokens(m) for m in messages[compress_start:compress_end]
+            )
+            if force:
+                pressure: Optional[float] = 1.0
+            elif self.context_length:
+                pressure = float(display_tokens) / float(self.context_length)
+            else:
+                pressure = None
+            return evaluate_compaction_economics(
+                reclaimed_tokens=reclaimed,
+                new_prefix_tokens=max(0, int(display_tokens) - reclaimed),
+                ratio=self.cache_write_read_ratio,
+                horizon_requests=self.cache_payback_horizon_requests,
+                context_pressure=pressure,
+            )
+        except Exception as exc:  # noqa: BLE001 — the gate must never block a compaction
+            logger.debug("Compaction economics check failed (fail-open): %s", exc)
+            return False, ""
+
     def _drop_blank_echoes(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove blank platform echoes trailing the latest actionable user turn."""
         blank = self._blank_echo_indices_after(messages, self._find_last_user_message_idx(messages, 0))
@@ -5276,6 +5321,21 @@ Write only the summary body. Do not include any preamble or prefix."""
             )
             return messages
         display_tokens = current_tokens if current_tokens else self.last_prompt_tokens or estimate_messages_tokens_rough(messages)
+        # Prompt-cache economics (opt-in, `compression.cache_write_read_ratio`): compaction rewrites the
+        # sent prefix, so the request after it pays a cache WRITE for that prefix instead of a read.
+        # Defer when the reclaim cannot repay that rewrite — window pressure overrides the gate, and a
+        # manual /compress never defers. Runs BEFORE any mutation so a deferral returns the pristine
+        # input, matching the no-op contract callers gate on with `result is not input`.
+        if self.cache_write_read_ratio > 0:
+            _defer, _econ_reason = self._compaction_economics_verdict(messages, display_tokens, force)
+            if _defer:
+                self._structural_no_op_result(telemetry, "cache_economics_deferred", _econ_reason)
+                if not self.quiet_mode:
+                    logger.info(
+                        "Compaction deferred — %s. The reclaim cannot repay the prompt-cache rewrite "
+                        "yet; compaction proceeds once window pressure overrides.", _econ_reason,
+                    )
+                return messages
         # Phase 1: Prune old tool results (cheap, no LLM call)
         messages, pruned_count = self._prune_old_tool_results(
             messages, protect_tail_count=self.protect_last_n, protect_tail_tokens=self.tail_token_budget,

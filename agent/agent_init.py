@@ -23,6 +23,11 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 from agent.context_compressor import ContextCompressor
+from agent.compression_economics import (
+    DEFAULT_PAYBACK_HORIZON_REQUESTS as _ECON_DEFAULT_HORIZON,
+    resolve_cache_write_read_ratio as _econ_resolve_ratio,
+    resolve_payback_horizon_requests as _econ_resolve_horizon,
+)
 from agent.agent_runtime_helpers import _ra
 from agent.iteration_budget import IterationBudget, normalize_budget_warning_ratio
 from agent.memory_manager import StreamingContextScrubber
@@ -1523,6 +1528,12 @@ def _parse_compression_config(agent, _agent_cfg) -> CompressionSettings:
         proactive_prune_min_reclaim=max(
             0, _parse_config_int(cfg.get("proactive_prune_min_reclaim_tokens", 4096), 4096)
         ),
+        # Prompt-cache repayment gate for full compaction (0.0 = disabled). Coerced through the
+        # economics module so a malformed value degrades to "disabled", never to an unmodelled cost.
+        cache_write_read_ratio=_econ_resolve_ratio(cfg.get("cache_write_read_ratio", 0.0)),
+        cache_payback_horizon_requests=_econ_resolve_horizon(
+            cfg.get("cache_payback_horizon_requests", _ECON_DEFAULT_HORIZON)
+        ),
         protect_first=protect_first,
         abort_on_summary_failure=_cfg_flag(cfg, "abort_on_summary_failure", False),
         # Per-model threshold overrides: keys substring-matched against the model name
@@ -1960,6 +1971,8 @@ def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_c
             proactive_prune_tokens=cs.proactive_prune_tokens,
             proactive_prune_min_result_chars=cs.proactive_prune_min_chars,
             proactive_prune_min_reclaim_tokens=cs.proactive_prune_min_reclaim,
+            cache_write_read_ratio=cs.cache_write_read_ratio,
+            cache_payback_horizon_requests=cs.cache_payback_horizon_requests,
             min_tail_user_messages=cs.min_tail_users, tail_mode=cs.tail_mode,
             custom_providers=_custom_providers,
         )
