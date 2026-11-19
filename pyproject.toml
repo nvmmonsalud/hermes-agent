@@ -237,7 +237,7 @@ anthropic = ["anthropic==0.125.0"] # CVE-2026-34450, CVE-2026-34452
 # Web search backends — each only loaded when the user picks it as their
 # search provider (configured via `hermes tools` or config.yaml).
 exa = ["exa-py==2.26.0"]
-firecrawl = ["firecrawl-py==4.53.2"]
+firecrawl = ["firecrawl-py==4.57.0"]
 parallel-web = ["parallel-web==0.6.0"]
 ddgs = ["ddgs==9.16.0"]
 # Image generation backends

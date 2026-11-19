@@ -1868,10 +1868,11 @@ wheels = [
 
 [[package]]
 name = "firecrawl-py"
-version = "4.53.2"
+version = "4.57.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "certifi" },
     { name = "httpx" },
     { name = "nest-asyncio" },
     { name = "pydantic" },
@@ -1879,9 +1880,9 @@ dependencies = [
     { name = "requests" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/ff/1f93bfb38ca0336f0a104bd4cabd8262495d6eaa91fba42182373f40020c/firecrawl_py-4.53.2.tar.gz", hash = "sha256:61ba929d20fa9ade80b56041eb0b30a2d52c0d72c6aec8b4b5d588174cb7776b", size = 274728, upload-time = "2026-10-19T18:07:16.927Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/41/66a35172924c175eddda06f2aa125a0136100e7137784b0427ccd24f9e9c/firecrawl_py-4.57.0.tar.gz", hash = "sha256:df270015fd7db613b058386ba32b7b21d80f28a339fa56a120342ea9bdd133ca", size = 283054, upload-time = "2026-11-12T15:19:04.000Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/32/0f3755b1adb97bc9400f3e7bbfccca31013769c947de38f1440ef1707717/firecrawl_py-4.53.2-py3-none-any.whl", hash = "sha256:7619d29408c17da45fae4a2d6b96dbc0d34304f6df37e22258e0d91f9059f9e9", size = 336815, upload-time = "2026-10-19T18:07:15.353Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/6e/8497fecd42aea1e3ada996bc56a146fbf133d0b87f81d85d594598f81fe6/firecrawl_py-4.57.0-py3-none-any.whl", hash = "sha256:3f21227eb97fc7dabbc33c6637e3544aa7febb613fc312d4e6cc9bb30367733d", size = 346258, upload-time = "2026-11-12T15:19:02.000Z" },
 ]
 
 [[package]]
@@ -2648,7 +2649,7 @@ requires-dist = [
     { name = "fire", marker = "python_full_version >= '3.14'", specifier = "==0.7.1" },
     { name = "firecrawl-anydoc", marker = "python_full_version >= '3.14'", specifier = "==0.2.4" },
     { name = "firecrawl-anydoc", marker = "extra == 'doc-extract'", specifier = "==0.2.4" },
-    { name = "firecrawl-py", marker = "extra == 'firecrawl'", specifier = "==4.53.2" },
+    { name = "firecrawl-py", marker = "extra == 'firecrawl'", specifier = "==4.57.0" },
     { name = "google-api-python-client", marker = "extra == 'google'", specifier = "==2.201.0" },
     { name = "google-auth", marker = "extra == 'google'", specifier = "==2.62.0" },
     { name = "google-auth", marker = "extra == 'vertex'", specifier = "==2.62.0" },
